@@ -7,6 +7,8 @@ from pathlib import Path
 import streamlit as st
 from cloud import CloudError, config, login, signup, logout, db, list_books, questions, progress, add_book, upsert_progress, delete_progress
 from parser import extract_pdf
+from ocr_parser import extract_scanned_pdf, ocr_available
+import fitz
 
 st.set_page_config(page_title='또풀어 | TTOPULO',page_icon='📖',layout='wide',initial_sidebar_state='collapsed')
 st.markdown('''<style>
@@ -263,25 +265,84 @@ def library_page():
     file=st.file_uploader('문제가 포함된 PDF',type=['pdf'],key='upload')
     if file:
         payload=file.getvalue()
-        fingerprint=hashlib.sha256(payload).hexdigest()
+        base_hash=hashlib.sha256(payload).hexdigest()
+        mode=st.radio('PDF 인식 방식', ['일반 PDF (텍스트 추출)', '스캔 PDF (한국어 OCR)'],horizontal=True)
+        scanned=mode.startswith('스캔')
+        page_start=1;page_end=1
+        if scanned:
+            page_count=len(fitz.open(stream=payload,filetype='pdf'))
+            st.info(f'이 파일은 {page_count}페이지야. 스캔 인식은 서버 부담을 줄이기 위해 한 번에 최대 12페이지씩 처리해.')
+            l,r=st.columns(2)
+            with l:page_start=st.number_input('시작 페이지',min_value=1,max_value=page_count,value=1,step=1)
+            with r:page_end=st.number_input('끝 페이지',min_value=page_start,max_value=min(page_count,page_start+11),value=min(page_count,page_start+4),step=1)
+            st.caption('PDF 페이지 번호 기준이야. 1~5페이지를 저장한 다음 6~10페이지를 다른 문제집으로 등록할 수 있어.')
+        fingerprint=hashlib.sha256((base_hash+f':{mode}:{page_start}:{page_end}').encode()).hexdigest() if scanned else base_hash
         existing=next((b for b in items if b['source_hash']==fingerprint),None)
-        if existing:st.info(f'이미 「{existing["title"]}」에 등록된 파일이야.')
+        if existing:
+            st.info(f'이미 「{existing["title"]}」에 등록된 파일/페이지 범위야.')
         else:
-            title=st.text_input('문제집 이름',value=Path(file.name).stem.replace(' 기말고사 퀴즈',' 문제집').replace(' 퀴즈',' 문제집'))
+            default_title=Path(file.name).stem.replace(' 기말고사 퀴즈',' 문제집').replace(' 퀴즈',' 문제집')
+            if scanned:default_title+=f' ({page_start}~{page_end}쪽)'
+            title=st.text_input('문제집 이름',value=default_title)
             try:
-                parsed=extract_pdf(payload)
-                st.success(f'문제 후보 {len(parsed)}개 인식했어.')
-                st.caption('문제집 등록 전에 정답과 선지를 확인해 줘. 오류가 있는 원문은 검토 필요로 표시돼.')
-                for q in parsed:
-                    with st.expander(f'{"⚠️ " if q["needs_review"] else ""}{q["section"]} · {q["number"]}번 · {q["prompt"][:45]}'):
-                        st.write(q['prompt'])
-                        for o in q['options']:st.write(o['label']+' '+o['text'])
-                        st.write('**정답:** '+(q['answer_text'] or '미기재'))
-                        st.write('**해설:** '+(q['explanation'] or '미기재'))
-                        if q['notes']:st.warning(q['notes'])
-                if st.button('이 문제집 저장',type='primary',disabled=not parsed or not title.strip()):
-                    api(add_book,title.strip(),file.name,fingerprint,parsed)
-                    st.success('문제집을 등록했어!');st.rerun()
+                if not scanned:
+                    parsed=extract_pdf(payload)
+                else:
+                    if not ocr_available():
+                        st.error('한국어 OCR 실행 파일이 없어. GitHub에 packages.txt가 올라갔는지 확인해 줘.')
+                        parsed=[]
+                    else:
+                        run_key='ocr_'+fingerprint
+                        if st.button('스캔 PDF 인식 시작',type='primary'):
+                            bar=st.progress(0,text='한국어 글자를 읽고 있어...')
+                            parsed_result=extract_scanned_pdf(payload,int(page_start),int(page_end),
+                                progress=lambda n,total:bar.progress(min(n/total,1.0),text=f'{n}/{total}페이지 처리'))
+                            st.session_state[run_key]=parsed_result
+                            bar.empty()
+                        parsed=st.session_state.get(run_key,[])
+                if parsed:
+                    st.success(f'문제 후보 {len(parsed)}개 인식했어.')
+                    if scanned:
+                        st.warning('OCR로 인식한 문제는 정확하지 않을 수 있어. 모든 문제·선지와 정답을 원본 PDF와 대조해 줘. OCR 추출 결과는 기본적으로 자동 채점 보류 상태야.')
+                    else:
+                        st.caption('문제집 등록 전에 정답과 선지를 확인해 줘.')
+                    for q in parsed:
+                        with st.expander(f'{"⚠️ " if q["needs_review"] else ""}{q["section"]} · {q["number"]}번 · {q["prompt"][:45]}'):
+                            if scanned:
+                                q['prompt']=st.text_area('문제 문장',value=q['prompt'],key=f'ocrprompt_{fingerprint}_{q["uid"]}')
+                                raw=st.text_area('선지 (한 줄에 하나, ①부터 순서대로)',
+                                    value='\n'.join(x['label']+' '+x['text'] for x in q['options']),
+                                    key=f'ocropts_{fingerprint}_{q["uid"]}')
+                                new_options=[]
+                                for line in raw.splitlines():
+                                    m=re.match(r'^([①②③④⑤⑥⑦⑧⑨⑩])\s*(.*)',line.strip())
+                                    if m:new_options.append({'label':m.group(1),'text':m.group(2)})
+                                q['options']=new_options
+                                q['answer_text']=st.selectbox('원본에서 확인한 정답', ['선택 안 함']+[x['label'] for x in new_options],
+                                    key=f'ocranswer_{fingerprint}_{q["uid"]}')
+                                if q['answer_text']=='선택 안 함':q['answer_text']=''
+                                q['answer_indices']=[i for i,x in enumerate(new_options) if x['label']==q['answer_text']]
+                                q['explanation']=st.text_area('해설 (OCR 초안)',value=q['explanation'],
+                                    key=f'ocrexplain_{fingerprint}_{q["uid"]}')
+                                q['needs_review']=not bool(q['answer_indices']) or len(new_options)<2
+                                if q['notes']:st.caption(q['notes'])
+                                verified=st.checkbox('문제·선지·정답을 원본과 대조하여 확인함',
+                                    key=f'ocrverified_{fingerprint}_{q["uid"]}')
+                                q['needs_review']=q['needs_review'] or not verified
+                            else:
+                                st.write(q['prompt'])
+                                for o in q['options']:st.write(o['label']+' '+o['text'])
+                                st.write('**정답:** '+(q['answer_text'] or '미기재'))
+                                st.write('**해설:** '+(q['explanation'] or '미기재'))
+                                if q['notes']:st.warning(q['notes'])
+                    valid=[q for q in parsed if len(q['options'])>=2 and len(q['prompt'])>=5]
+                    st.caption(f'저장할 수 있는 문제 후보: {len(valid)}/{len(parsed)}개. 정답 미확인 문항은 자동 채점하지 않아.')
+                    if st.button('이 문제집 저장',type='primary',disabled=not valid or not title.strip()):
+                        api(add_book,title.strip(),file.name,fingerprint,valid)
+                        if scanned:st.session_state.pop('ocr_'+fingerprint,None)
+                        st.success('문제집을 등록했어!');st.rerun()
+                elif not scanned:
+                    st.warning('문제를 찾지 못했어. 스캔 PDF (한국어 OCR) 모드로 바꿔서 시도해 봐.')
             except Exception as exc:
                 st.error(f'PDF를 읽지 못했어: {exc}')
     st.caption('PDF는 문제 추출에만 사용하고, 원본 PDF 파일 자체를 서버에 보관하지 않아.')
