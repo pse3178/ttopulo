@@ -163,6 +163,22 @@ def nums(qs,index,learning,book_id):
             st.rerun()
 
 
+def save_bookmark_change(book_id, q_id, checkbox_key):
+    desired=bool(st.session_state[checkbox_key])
+    try:
+        upsert_progress(book_id, q_id, bookmarked=desired)
+        rows=progress(book_id)
+        saved=next((r for r in rows if r['question_id']==q_id), None)
+        if saved is None or bool(saved.get('bookmarked')) != desired:
+            st.session_state[checkbox_key] = not desired
+            st.session_state['bookmark_error'] = True
+            st.session_state['bookmark_error_message'] = '북마크가 데이터베이스에 저장되지 않았어. 다시 시도하거나 관리자에게 알려줘.'
+    except CloudError as exc:
+        st.session_state[checkbox_key] = not desired
+        st.session_state['bookmark_error'] = True
+        st.session_state['bookmark_error_message'] = '북마크 저장 실패: ' + str(exc)
+
+
 def study_page(book,learning):
     book_id=book['id']; qs=book_data(book_id)
     if not qs:
@@ -185,16 +201,17 @@ def study_page(book,learning):
         with title_col:
             st.markdown(f'**{q["section"]} · 문제 {q["number"]}**')
         with mark_col:
-            is_marked=bool(q.get('bookmarked'))
-            label='🔖 다시 보기 해제' if is_marked else '🔖 나중에 다시 보기'
-            bkey=f'bookmark_{q["id"]}'
-            st.markdown(f'<style>.st-key-{bkey} button{{color:#b91c1c!important;border:2px solid #ef4444!important;background:#fff1f2!important}}.st-key-{bkey} button p{{color:#b91c1c!important;-webkit-text-fill-color:#b91c1c!important}}</style>',unsafe_allow_html=True)
-            if st.button(label,key=bkey,use_container_width=True,
-                         help='이 문제의 번호표에 빨간 테두리를 표시하거나 해제합니다.'):
-                api(upsert_progress,book_id,q['id'],bookmarked=not is_marked)
-                st.rerun()
+            checkbox_key=f'bookmark_check_{q["id"]}'
+            if checkbox_key not in st.session_state:
+                st.session_state[checkbox_key] = bool(q.get('bookmarked'))
+            st.checkbox('🔖 나중에 다시 보기', key=checkbox_key,
+                        on_change=save_bookmark_change,
+                        args=(book_id, q['id'], checkbox_key),
+                        help='체크하면 왼쪽 문제 번호에 빨간 테두리가 생깁니다.')
+        if st.session_state.pop('bookmark_error', None):
+            st.error(st.session_state.pop('bookmark_error_message', '북마크 저장 오류'))
         if q.get('bookmarked'):
-            st.caption('🔴 다시 볼 문제로 표시했어. 왼쪽 번호표가 빨간색으로 보여.')
+            st.caption('🔴 다시 볼 문제로 표시했어. 왼쪽 번호표를 확인해 봐.')
         st.markdown('#### '+q['prompt'])
         opts=q['options'] or []
         labels=[o['label'] for o in opts]
