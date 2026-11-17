@@ -123,7 +123,7 @@ def questions(book_id):
 
 
 def progress(book_id):
-    return db('GET','quiz_progress',{'select':'question_id,learned,submitted_answer,is_correct',
+    return db('GET','quiz_progress',{'select':'question_id,learned,submitted_answer,is_correct,bookmarked',
                                     'book_id':f'eq.{book_id}'})
 
 

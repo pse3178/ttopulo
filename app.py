@@ -90,6 +90,7 @@ def book_data(book_id):
     for q in qs:
         p=done.get(q['id'],{})
         q['learned']=bool(p.get('learned'))
+        q['bookmarked']=bool(p.get('bookmarked',False))
         q['submitted_answer']=p.get('submitted_answer')
         q['is_correct']=p.get('is_correct')
     return qs
@@ -115,16 +116,23 @@ def explain(q):
 
 def nums(qs,index,learning,book_id):
     st.markdown('**문제 선택**')
-    st.caption('네모를 누르면 해당 번호로 이동해.')
+    st.caption('네모를 누르면 해당 번호로 이동해. 빨간 테두리 = 나중에 다시 볼 문제')
+    bookmarked=sum(bool(q.get('bookmarked')) for q in qs)
+    if bookmarked:
+        st.caption(f'🔖 다시 볼 문제 {bookmarked}개')
     # The CSS ::after draws black digits even on browser/theme variants where
     # Streamlit hides the button's own text.
     css=[]
     for i,q in enumerate(qs):
         ident=f'nav_{"l" if learning else "t"}_{q["id"].replace("-", "_")}'
         selected=i==index
+        marked=bool(q.get('bookmarked'))
+        border_color='#dc2626' if marked else ('#2563eb' if selected else '#cbd5e1')
+        border_size='3px' if marked else '1px'
+        button_bg='#fee2e2' if (marked and selected) else '#fff7f7' if marked else '#dbeafe' if selected else '#fff'
         css.append(f'''.st-key-{ident} button{{position:relative!important;min-height:42px!important;
-          padding:0!important;border:1px solid {'#2563eb' if selected else '#cbd5e1'}!important;
-          background:{'#dbeafe' if selected else '#fff'}!important}}
+          padding:0!important;border:{border_size} solid {border_color}!important;
+          background:{button_bg}!important}}
           .st-key-{ident} button::after{{content:"{i+1}";position:absolute;inset:0;
           display:flex;align-items:center;justify-content:center;pointer-events:none;
           color:#111827!important;font-size:14px;font-weight:700}}
@@ -173,7 +181,20 @@ def study_page(book,learning):
             nums(qs,idx,learning,book_id)
     with right:
         q=qs[idx]
-        st.markdown(f'**{q["section"]} · 문제 {q["number"]}**')
+        title_col, mark_col = st.columns([3, 2], gap='small')
+        with title_col:
+            st.markdown(f'**{q["section"]} · 문제 {q["number"]}**')
+        with mark_col:
+            is_marked=bool(q.get('bookmarked'))
+            label='🔖 다시 보기 해제' if is_marked else '🔖 나중에 다시 보기'
+            bkey=f'bookmark_{q["id"]}'
+            st.markdown(f'<style>.st-key-{bkey} button{{color:#b91c1c!important;border:2px solid #ef4444!important;background:#fff1f2!important}}.st-key-{bkey} button p{{color:#b91c1c!important;-webkit-text-fill-color:#b91c1c!important}}</style>',unsafe_allow_html=True)
+            if st.button(label,key=bkey,use_container_width=True,
+                         help='이 문제의 번호표에 빨간 테두리를 표시하거나 해제합니다.'):
+                api(upsert_progress,book_id,q['id'],bookmarked=not is_marked)
+                st.rerun()
+        if q.get('bookmarked'):
+            st.caption('🔴 다시 볼 문제로 표시했어. 왼쪽 번호표가 빨간색으로 보여.')
         st.markdown('#### '+q['prompt'])
         opts=q['options'] or []
         labels=[o['label'] for o in opts]
