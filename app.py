@@ -114,50 +114,58 @@ def explain(q):
         st.info('검토 메모: '+q['notes'])
 
 
-def nums(qs,index,learning,book_id):
-    st.markdown('**문제 선택**')
-    st.caption('네모를 누르면 해당 번호로 이동해. 빨간 테두리 = 나중에 다시 볼 문제')
-    bookmarked=sum(bool(q.get('bookmarked')) for q in qs)
-    if bookmarked:
-        st.caption(f'🔖 다시 볼 문제 {bookmarked}개')
+def nums(qs,index,learning,book_id):
+    st.markdown('**문제 선택**')
+    st.caption('네모를 누르면 해당 번호로 이동해. 빨간 테두리 = 나중에 다시 볼 문제')
+    bookmarked=sum(bool(q.get('bookmarked')) for q in qs)
+    if bookmarked:
+        st.caption(f'🔖 다시 볼 문제 {bookmarked}개')
+    # Always show numeric labels; emojis caused truncated text in narrow buttons.
+    # Keep the proven primary-button red outline for bookmarked questions.
     st.markdown("""<style>
     .stButton button[kind="primary"] {
         border: 3px solid #dc2626 !important;
         background: #fff1f2 !important;
         color: #991b1b !important;
     }
-    .stButton button[kind="primary"] p {
+    .stButton button[kind="primary"] p,
+    .stButton button[kind="primary"] span {
         color: #991b1b !important;
         -webkit-text-fill-color: #991b1b !important;
         font-weight: 800 !important;
     }
+    .stButton button p, .stButton button span {
+        visibility: visible !important;
+        opacity: 1 !important;
+        text-overflow: clip !important;
+    }
     </style>""", unsafe_allow_html=True)
-    for start in range(0,len(qs),5):
-        cols=st.columns(5,gap='small')
-        for i in range(start,min(start+5,len(qs))):
-            with cols[i-start]:
-                q=qs[i]
-                ident=f'nav_{"l" if learning else "t"}_{q["id"].replace("-", "_")}'
-                if st.button(('🔴 ' if q.get('bookmarked') else '')+str(i+1),key=ident,
-                             type='primary' if q.get('bookmarked') else 'secondary',use_container_width=True,
-                             help=f'{i+1}번'):
-                    if learning:
-                        api(upsert_progress,book_id,qs[index]['id'],learned=True)
-                    st.session_state['current_question']=i
-                    st.rerun()
-    st.divider()
-    st.markdown(f'**현재 문제: {index+1}/{len(qs)}**')
-    st.progress((index+1)/len(qs))
-    done=sum(bool(q['learned']) if learning else q['submitted_answer'] is not None for q in qs)
-    st.caption(f'누적 {"학습" if learning else "실전 풀이"} 완료: {done}/{len(qs)}')
-    with st.expander('진행 기록 초기화'):
-        ok=st.checkbox('현재 문제집의 기록 초기화 확인',key=f'confirm_{book_id}_{learning}')
-        if st.button('기록 초기화',disabled=not ok,key=f'reset_{book_id}_{learning}'):
-            api(delete_progress,book_id,'learn' if learning else 'test')
-            st.session_state['current_question']=0
-            st.rerun()
-
-
+    for start in range(0,len(qs),5):
+        cols=st.columns(5,gap='small')
+        for i in range(start,min(start+5,len(qs))):
+            with cols[i-start]:
+                q=qs[i]
+                ident=f'nav_{"l" if learning else "t"}_{q["id"].replace("-", "_")}'
+                if st.button(str(i+1),key=ident,
+                             type='primary' if q.get('bookmarked') else 'secondary',
+                             use_container_width=True, help=f'{i+1}번'):
+                    if learning:
+                        api(upsert_progress,book_id,qs[index]['id'],learned=True)
+                    st.session_state['current_question']=i
+                    st.rerun()
+    st.divider()
+    st.markdown(f'**현재 문제: {index+1}/{len(qs)}**')
+    st.progress((index+1)/len(qs))
+    done=sum(bool(q['learned']) if learning else q['submitted_answer'] is not None for q in qs)
+    st.caption(f'누적 {"학습" if learning else "실전 풀이"} 완료: {done}/{len(qs)}')
+    with st.expander('진행 기록 초기화'):
+        ok=st.checkbox('현재 문제집의 기록 초기화 확인',key=f'confirm_{book_id}_{learning}')
+        if st.button('기록 초기화',disabled=not ok,key=f'reset_{book_id}_{learning}'):
+            api(delete_progress,book_id,'learn' if learning else 'test')
+            st.session_state['current_question']=0
+            st.rerun()
+
+
 def save_bookmark_change(book_id, q_id, checkbox_key):
     desired = bool(st.session_state[checkbox_key])
     try:
