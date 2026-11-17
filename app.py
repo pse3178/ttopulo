@@ -120,29 +120,58 @@ def nums(qs,index,learning,book_id):
     bookmarked=sum(bool(q.get('bookmarked')) for q in qs)
     if bookmarked:
         st.caption(f'🔖 다시 볼 문제 {bookmarked}개')
-    # Always show numeric labels; emojis caused truncated text in narrow buttons.
-    # Keep the proven primary-button red outline for bookmarked questions.
+    # Wide navigation cells and zero padding prevent clipped numbers.
     st.markdown("""<style>
-    .stButton button[kind="primary"] {
-        border: 3px solid #dc2626 !important;
-        background: #fff1f2 !important;
-        color: #991b1b !important;
+    /* Navigation only: do not affect the other app buttons. */
+    div[class*="st-key-nav_"] button {
+        padding: 0 !important;
+        min-width: 0 !important;
+        width: 100% !important;
+        height: 44px !important;
+        min-height: 44px !important;
+        box-sizing: border-box !important;
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        overflow: visible !important;
     }
-    .stButton button[kind="primary"] p,
-    .stButton button[kind="primary"] span {
-        color: #991b1b !important;
-        -webkit-text-fill-color: #991b1b !important;
-        font-weight: 800 !important;
-    }
-    .stButton button p, .stButton button span {
+    div[class*="st-key-nav_"] button p,
+    div[class*="st-key-nav_"] button span {
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 15px !important;
+        line-height: 1.2 !important;
+        font-weight: 700 !important;
+        text-align: center !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
         visibility: visible !important;
         opacity: 1 !important;
-        text-overflow: clip !important;
+    }
+    div[class*="st-key-nav_"] button[kind="secondary"] {
+        background: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+    }
+    div[class*="st-key-nav_"] button[kind="secondary"] p,
+    div[class*="st-key-nav_"] button[kind="secondary"] span {
+        color: #111827 !important;
+        -webkit-text-fill-color: #111827 !important;
+    }
+    div[class*="st-key-nav_"] button[kind="primary"] {
+        border: 3px solid #dc2626 !important;
+        background: #fff1f2 !important;
+    }
+    div[class*="st-key-nav_"] button[kind="primary"] p,
+    div[class*="st-key-nav_"] button[kind="primary"] span {
+        color: #991b1b !important;
+        -webkit-text-fill-color: #991b1b !important;
     }
     </style>""", unsafe_allow_html=True)
-    for start in range(0,len(qs),5):
-        cols=st.columns(5,gap='small')
-        for i in range(start,min(start+5,len(qs))):
+    for start in range(0,len(qs),4):
+        cols=st.columns(4,gap='small')
+        for i in range(start,min(start+4,len(qs))):
             with cols[i-start]:
                 q=qs[i]
                 ident=f'nav_{"l" if learning else "t"}_{q["id"].replace("-", "_")}'
