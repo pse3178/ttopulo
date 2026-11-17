@@ -261,6 +261,85 @@ def library_page():
                 if st.button('⚙️ 관리',key='manage_'+book['id'],use_container_width=True):
                     state_go('manage',book['id'])
     st.divider()
+    st.subheader('ChatGPT에서 변환한 문제집(JSON) 등록')
+    st.caption('ChatGPT에서 만든 또풀어용 JSON 파일을 올리면 PDF를 다시 만들 필요 없이 바로 문제집으로 등록할 수 있어.')
+    json_upload=st.file_uploader('또풀어 문제집 JSON 파일',type=['json'],key='json_upload')
+    if json_upload is not None:
+        try:
+            raw_data=json_upload.getvalue()
+            if len(raw_data)>3_000_000:
+                raise ValueError('JSON 파일이 너무 커. 3MB 이하로 나누어 올려줘.')
+            data=json.loads(raw_data.decode('utf-8-sig'))
+            if isinstance(data,list):
+                title_default=Path(json_upload.name).stem
+                imported=data
+            elif isinstance(data,dict):
+                title_default=str(data.get('title') or Path(json_upload.name).stem)
+                imported=data.get('questions')
+            else:
+                raise ValueError('JSON 최상위에는 questions 목록 또는 문제 목록이 필요해.')
+            if not isinstance(imported,list) or not 1<=len(imported)<=500:
+                raise ValueError('questions에는 문제 1~500개가 필요해.')
+            checked=[]
+            for pos,item in enumerate(imported,1):
+                if not isinstance(item,dict):
+                    raise ValueError(f'{pos}번째 문제 형식이 올바르지 않아.')
+                prompt=item.get('prompt')
+                options=item.get('options')
+                if not isinstance(prompt,str) or not prompt.strip() or len(prompt)>10000:
+                    raise ValueError(f'{pos}번째 문제의 문장을 확인해 줘.')
+                if not isinstance(options,list) or not 2<=len(options)<=10:
+                    raise ValueError(f'{pos}번째 문제의 선지가 2~10개인지 확인해 줘.')
+                normalized=[]
+                for oi,option in enumerate(options):
+                    if not isinstance(option,dict):
+                        raise ValueError(f'{pos}번째 문제의 선지 형식이 올바르지 않아.')
+                    label='①②③④⑤⑥⑦⑧⑨⑩'[oi]
+                    optext=option.get('text')
+                    if option.get('label')!=label or not isinstance(optext,str) or not optext.strip() or len(optext)>2000:
+                        raise ValueError(f'{pos}번째 문제의 {label}번 선지를 확인해 줘.')
+                    normalized.append({'label':label,'text':optext.strip()})
+                indices=item.get('answer_indices',[])
+                if not isinstance(indices,list) or any(type(i)!=int or i<0 or i>=len(normalized) for i in indices) or len(indices)>1:
+                    raise ValueError(f'{pos}번째 문제의 정답 번호를 확인해 줘.')
+                answer_label=normalized[indices[0]]['label'] if indices else ''
+                needs_review=bool(item.get('needs_review',False)) or not indices
+                checked.append({
+                    'section':str(item.get('section') or '미분류')[:100],
+                    'number':int(item.get('number',pos)),
+                    'page':int(item.get('page',1)),
+                    'prompt':prompt.strip(),
+                    'options':normalized,
+                    'answer_text':answer_label,
+                    'answer_indices':indices,
+                    'explanation':str(item.get('explanation') or '')[:20000],
+                    'notes':str(item.get('notes') or '')[:2000],
+                    'needs_review':needs_review,
+                })
+            fingerprint=hashlib.sha256(raw_data).hexdigest()
+            already=next((b for b in items if b['source_hash']==fingerprint),None)
+            if already:
+                st.info(f'이미 「{already["title"]}」에 등록된 JSON 파일이야.')
+            else:
+                st.success(f'JSON 문제 {len(checked)}개를 읽었어.')
+                st.warning('PDF에서 변환한 문제는 반드시 원본과 비교해 줘. 검토가 필요한 문제는 자동 채점을 보류해.')
+                for item in checked[:8]:
+                    with st.expander(f'{item["number"]}번 · {item["prompt"][:38]}'):
+                        st.write(item['prompt'])
+                        for opt in item['options']:
+                            st.write(opt['label']+' '+opt['text'])
+                        st.write('정답: '+(item['answer_text'] or '미확인'))
+                        st.write('해설: '+(item['explanation'] or '없음'))
+                        if item['needs_review']:st.warning('정답 검토 필요')
+                if len(checked)>8:st.caption(f'미리보기는 앞의 8문제만 표시해. 전체 {len(checked)}문제가 저장돼.')
+                json_title=st.text_input('JSON 문제집 이름',value=title_default[:150],key='json_title')
+                if st.button('JSON 문제집 저장',type='primary',disabled=not json_title.strip()):
+                    api(add_book,json_title.strip(),json_upload.name,fingerprint,checked)
+                    st.success('JSON 문제집을 저장했어!')
+                    st.rerun()
+        except (ValueError,TypeError,UnicodeError,json.JSONDecodeError) as exc:
+            st.error(f'JSON 파일을 확인해 줘: {exc}')
+    st.divider()
     st.subheader('새 PDF 문제집 등록')
     file=st.file_uploader('문제가 포함된 PDF',type=['pdf'],key='upload')
     if file:
